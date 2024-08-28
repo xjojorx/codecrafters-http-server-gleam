@@ -164,7 +164,12 @@ fn parse_header(header_str: String) -> HttpHeader{
 fn handle_get(request: HttpRequest) -> HttpResponse {
   case request.target {
     "/" -> HttpResponse(Success, [], "")
+    "/echo/"<>rest -> handle_echo(request, rest)
     _ -> HttpResponse(NotFound, [], "")
   }
-  
+}
+
+fn handle_echo(_request: HttpRequest, content: String) -> HttpResponse  {
+  HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], content)
+
 }
