@@ -273,12 +273,13 @@ fn handle_post_file(request: HttpRequest, filename: String, config: Configuratio
 
 fn apply_compression(response: HttpResponse, request: HttpRequest, _state: State) -> HttpResponse {
   let accepted = client_accepts_compression(request)
-  case accepted {
+  let selected = select_compresion(accepted)
+  case selected {
     Some("gzip") -> gzip_response(response)
     _ -> response
   }
 }
-fn client_accepts_compression(request: HttpRequest) -> Option(String) {
+fn client_accepts_compression(request: HttpRequest) -> List(String) {
   let header_val =request.headers
     |> list.find_map(fn(h) {
       let HttpHeader(key, val) = h
@@ -288,8 +289,21 @@ fn client_accepts_compression(request: HttpRequest) -> Option(String) {
       }
     })
   case header_val {
-    Ok(val) -> Some(val)
-    Error(_) -> None
+    Ok(val) -> string.split(val, ",") |> list.map(fn(s) {string.trim(s)})
+    Error(_) -> []
+  }
+}
+
+fn select_compresion(client_accepted: List(String)) -> Option(String) {
+  let supported = ["gzip"]
+  let valid_compressions = list.filter(supported, fn(c){ list.contains(client_accepted, c)})
+  case valid_compressions {
+    [] -> None
+    [x] -> Some(x)
+    l -> case list.first(l) {
+      Ok(val) -> Some(val)
+      Error(_) -> None
+    }
   }
 }
 
