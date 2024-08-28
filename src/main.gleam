@@ -27,8 +27,13 @@ type HttpStatus {
   ServerError
 }
 
+type ResponseBody {
+  EmptyBody
+  StringBody(String)
+  BinaryBody(BitArray)
+}
 type HttpResponse {
-  HttpResponse(status_code: HttpStatus, headers: List(HttpHeader), body: String)
+  HttpResponse(status_code: HttpStatus, headers: List(HttpHeader), body: ResponseBody)
 }
 type HttpMethod{
   Get
@@ -107,30 +112,41 @@ fn handle_package(message: glisten.Message(Nil), state: State) {
       let assert Ok(msg_str) = bit_array.to_string(msg_bits)
 
       let response = handle_request(msg_str, state)
-      let str_res = format_response(response) |> io.debug
+      let res = format_response(response) |> io.debug
 
-      let res = bytes_builder.from_string(str_res)
       Ok(res)
     }
     _ -> Error(Nil)
   }
 }
 
-fn format_response(response: HttpResponse) -> String {
+fn format_response(response: HttpResponse) -> bytes_builder.BytesBuilder {
   let status_line = status_str(response.status_code)
   let headers =
     response.headers
     |> list.map(header_str)
 
-  let body_bytes = bit_array.from_string(response.body)
-  let body_size = bit_array.byte_size(body_bytes)
+  let body_bits = case response.body {
+    StringBody(str) -> bit_array.from_string(str)
+    BinaryBody(bits) -> bits
+    EmptyBody -> <<>>
+  }
+  let body_size = bit_array.byte_size(body_bits)
   let headers = ["Content-Length: "<>int.to_string(body_size), ..headers]
   let headers_str = string.join(headers, "\r\n")
     <> "\r\n" // end of last header
 
-  "HTTP/1.1 " <> status_line <> "\r\n" 
+  let bodyless_response = "HTTP/1.1 " <> status_line <> "\r\n" 
     <> headers_str <> "\r\n" //crlf to end header section
-    <> response.body 
+
+
+  bodyless_response
+  |>  bytes_builder.from_string
+  |> bytes_builder.append(body_bits)
+
+
+  // let str_res = bodyless_response<> response.body 
+  // bytes_builder.from_string(str_res)
 }
 
 fn status_str(code: HttpStatus) -> String {
@@ -211,16 +227,16 @@ fn parse_header(header_str: String) -> HttpHeader{
 
 fn handle_get(request: HttpRequest,state: State) -> HttpResponse {
   case request.target {
-    "/" -> HttpResponse(Success, [], "")
+    "/" -> HttpResponse(Success, [], EmptyBody)
     "/echo/"<>rest -> handle_echo(request, rest)
     "/user-agent"|"/user-agent/"  -> handle_user_agent(request)
     "/files/"<>path -> handle_files(request, path, state.conf)
-    _ -> HttpResponse(NotFound, [], "")
+    _ -> HttpResponse(NotFound, [], EmptyBody)
   }
 }
 
 fn handle_echo(_request: HttpRequest, content: String) -> HttpResponse  {
-  HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], content)
+  HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], StringBody(content))
 }
 
 fn handle_user_agent(request: HttpRequest)  -> HttpResponse {
@@ -230,8 +246,8 @@ fn handle_user_agent(request: HttpRequest)  -> HttpResponse {
   })
 
   case header_res {
-    Ok(HttpHeader(_, val)) -> HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], val)
-    _ -> HttpResponse(NotFound, [], "")
+    Ok(HttpHeader(_, val)) -> HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], StringBody(val))
+    _ -> HttpResponse(NotFound, [], EmptyBody)
   }
 }
 
@@ -242,11 +258,11 @@ fn handle_files(_request: HttpRequest, path: String, config: Configuration) -> H
     False -> base_path<>"/"<>path
   } |> io.debug
   case simplifile.is_file(path) {
-    Error(_) -> HttpResponse(ServerError, [], "")
-    Ok(False) -> HttpResponse(NotFound, [], "")
+    Error(_) -> HttpResponse(ServerError, [], EmptyBody)
+    Ok(False) -> HttpResponse(NotFound, [], EmptyBody)
     Ok(True) -> case simplifile.read(path) {
-      Ok(content) -> HttpResponse(Success, [HttpHeader("Content-Type", "application/octet-stream")], content)
-      Error(_) -> HttpResponse(ServerError, [], "")
+      Ok(content) -> HttpResponse(Success, [HttpHeader("Content-Type", "application/octet-stream")], StringBody(content))
+      Error(_) -> HttpResponse(ServerError, [], EmptyBody)
     }
   }
 }
@@ -254,7 +270,7 @@ fn handle_files(_request: HttpRequest, path: String, config: Configuration) -> H
 fn handle_post(request: HttpRequest, state: State) -> HttpResponse {
   case request.target {
     "/files/"<>filename -> handle_post_file(request, filename, state.conf)
-    _ -> HttpResponse(NotFound, [], "")
+    _ -> HttpResponse(NotFound, [], EmptyBody)
 
   }
 
@@ -266,8 +282,8 @@ fn handle_post_file(request: HttpRequest, filename: String, config: Configuratio
     False -> base_path<>"/"<>filename
   } |> io.debug
   case simplifile.write(path, request.body) {
-    Ok(_) -> HttpResponse(Created, [], "")
-    Error(_) -> HttpResponse(ServerError, [], "")
+    Ok(_) -> HttpResponse(Created, [], EmptyBody)
+    Error(_) -> HttpResponse(ServerError, [], EmptyBody)
   }
 }
 
@@ -308,5 +324,14 @@ fn select_compresion(client_accepted: List(String)) -> Option(String) {
 }
 
 fn gzip_response(response: HttpResponse) -> HttpResponse {
-  HttpResponse(response.status_code, [HttpHeader("Content-Encoding", "gzip"), ..response.headers], response.body)
+  let bits = case response.body {
+    EmptyBody -> <<>>
+    StringBody(str) -> bit_array.from_string(str)
+    BinaryBody(bits) -> bits
+  }
+  let compressed = gzip(bits)
+  HttpResponse(response.status_code, [HttpHeader("Content-Encoding", "gzip"), ..response.headers], BinaryBody(compressed))
 }
+
+@external(erlang, "zlib", "gzip")
+fn gzip(data: BitArray) -> BitArray
