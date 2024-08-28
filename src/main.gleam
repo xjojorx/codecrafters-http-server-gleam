@@ -165,11 +165,23 @@ fn handle_get(request: HttpRequest) -> HttpResponse {
   case request.target {
     "/" -> HttpResponse(Success, [], "")
     "/echo/"<>rest -> handle_echo(request, rest)
+    "/user-agent"|"/user-agent/"  -> handle_user_agent(request)
     _ -> HttpResponse(NotFound, [], "")
   }
 }
 
 fn handle_echo(_request: HttpRequest, content: String) -> HttpResponse  {
   HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], content)
+}
 
+fn handle_user_agent(request: HttpRequest)  -> HttpResponse {
+  let header_res = list.find(request.headers, fn(h)  {
+    let HttpHeader(key, _val) = h
+    key == "User-Agent"
+  })
+
+  case header_res {
+    Ok(HttpHeader(_, val)) -> HttpResponse(Success, [HttpHeader("Content-Type", "text/plain")], val)
+    _ -> HttpResponse(NotFound, [], "")
+  }
 }
