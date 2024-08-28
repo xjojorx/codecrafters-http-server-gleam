@@ -20,6 +20,7 @@ type HttpHeader {
 
 type HttpStatus {
   Success
+  Created
   // ClientError
   NotFound
   // Redirect
@@ -137,6 +138,7 @@ fn status_str(code: HttpStatus) -> String {
     Success -> "200 OK"
     NotFound -> "404 Not Found"
     ServerError -> "500 Server Error"
+    Created -> "201 Created"
   }
 }
 
@@ -149,6 +151,7 @@ fn handle_request(request: String,state: State) -> HttpResponse {
   let request = parse_request(request)
   case request.method {
     Get -> handle_get(request, state)
+    Post -> handle_post(request, state)
     _ -> panic
   }
 }
@@ -245,5 +248,24 @@ fn handle_files(_request: HttpRequest, path: String, config: Configuration) -> H
       Error(_) -> HttpResponse(ServerError, [], "")
     }
   }
+}
 
+fn handle_post(request: HttpRequest, state: State) -> HttpResponse {
+  case request.target {
+    "/files/"<>filename -> handle_post_file(request, filename, state.conf)
+    _ -> HttpResponse(NotFound, [], "")
+
+  }
+
+}
+fn handle_post_file(request: HttpRequest, filename: String, config: Configuration) -> HttpResponse {
+  let assert Some(base_path) = config.files_path
+  let path = case string.ends_with(base_path, "/"){
+    True -> base_path<>filename
+    False -> base_path<>"/"<>filename
+  } |> io.debug
+  case simplifile.write(path, request.body) {
+    Ok(_) -> HttpResponse(Created, [], "")
+    Error(_) -> HttpResponse(ServerError, [], "")
+  }
 }
