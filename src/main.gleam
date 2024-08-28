@@ -154,6 +154,7 @@ fn handle_request(request: String,state: State) -> HttpResponse {
     Post -> handle_post(request, state)
     _ -> panic
   }
+  |> apply_compression(request, state)
 }
 fn parse_request(raw_request: String) -> HttpRequest {
   io.debug(raw_request)
@@ -268,4 +269,30 @@ fn handle_post_file(request: HttpRequest, filename: String, config: Configuratio
     Ok(_) -> HttpResponse(Created, [], "")
     Error(_) -> HttpResponse(ServerError, [], "")
   }
+}
+
+fn apply_compression(response: HttpResponse, request: HttpRequest, _state: State) -> HttpResponse {
+  let accepted = client_accepts_compression(request)
+  case accepted {
+    Some("gzip") -> gzip_response(response)
+    _ -> response
+  }
+}
+fn client_accepts_compression(request: HttpRequest) -> Option(String) {
+  let header_val =request.headers
+    |> list.find_map(fn(h) {
+      let HttpHeader(key, val) = h
+      case key == "Accept-Encoding" {
+        True -> Ok(val)
+        False -> Error(Nil)
+      }
+    })
+  case header_val {
+    Ok(val) -> Some(val)
+    Error(_) -> None
+  }
+}
+
+fn gzip_response(response: HttpResponse) -> HttpResponse {
+  HttpResponse(response.status_code, [HttpHeader("Content-Encoding", "gzip"), ..response.headers], response.body)
 }
